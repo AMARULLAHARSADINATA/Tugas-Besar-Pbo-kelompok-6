@@ -4,43 +4,41 @@ import mysql.connector
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'  # Change to a random secret key
 
-# Database connection
-def get_db_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",  # Replace with your MySQL username
-        password="",  # Replace with your MySQL password
-        database="todo_db"
-    )
+class Database:
+    def __init__(self):
+        self.connection = mysql.connector.connect(
+            host="localhost",
+            user="root",  # Replace with your MySQL username
+            password="",  # Replace with your MySQL password
+            database="todo_db"
+        )
 
-@app.route('/')
-def index():
-    db = get_db_connection()
-    cursor = db.cursor()
-    
-    # Load tasks from the database
-    cursor.execute("""
-        SELECT t.id, t.task_name, t.deadline, p.priority_name, s.subject_name, st.status_name
-        FROM tasks t
-        JOIN priorities p ON t.priority_id = p.id
-        JOIN subjects s ON t.subject_id = s.id
-        JOIN statuses st ON t.status_id = st.id
-    """)
-    
-    tasks = cursor.fetchall()
-    cursor.close()
-    db.close()
-    return render_template('index.html', tasks=tasks)
+    def get_connection(self):
+        return self.connection
 
-@app.route('/add', methods=['POST'])
-def add_task():
-    task_name = request.form['task_name']
-    task_deadline = request.form['task_deadline']
-    task_priority = request.form['task_priority']
-    task_subject = request.form['task_subject']
+    def close(self):
+        self.connection.close()
 
-    if task_name and task_priority and task_deadline and task_subject:
-        db = get_db_connection()
+class TaskManager:
+    def __init__(self):
+        self.db = Database()
+
+    def fetch_tasks(self):
+        db = self.db.get_connection()
+        cursor = db.cursor()
+        cursor.execute("""
+            SELECT t.id, t.task_name, t.deadline, p.priority_name, s.subject_name, st.status_name
+            FROM tasks t
+            JOIN priorities p ON t.priority_id = p.id
+            JOIN subjects s ON t.subject_id = s.id
+            JOIN statuses st ON t.status_id = st.id
+        """)
+        tasks = cursor.fetchall()
+        cursor.close()
+        return tasks
+
+    def add_task(self, task_name, task_deadline, task_priority, task_subject):
+        db = self.db.get_connection()
         cursor = db.cursor()
 
         cursor.execute("INSERT IGNORE INTO subjects (subject_name) VALUES (%s)", (task_subject,))
@@ -59,7 +57,37 @@ def add_task():
         )
         db.commit()
         cursor.close()
-        db.close()
+
+    def delete_tasks(self, task_ids):
+        db = self.db.get_connection()
+        cursor = db.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id IN (%s)" % ','.join(task_ids))
+        db.commit()
+        cursor.close()
+
+    def delete_all_tasks(self):
+        db = self.db.get_connection()
+        cursor = db.cursor()
+        cursor.execute("DELETE FROM tasks")
+        db.commit()
+        cursor.close()
+
+@app.route('/')
+def index():
+    task_manager = TaskManager()
+    tasks = task_manager.fetch_tasks()
+    return render_template('index.html', tasks=tasks)
+
+@app.route('/add', methods=['POST'])
+def add_task():
+    task_manager = TaskManager()
+    task_name = request.form['task_name']
+    task_deadline = request.form['task_deadline']
+    task_priority = request.form['task_priority']
+    task_subject = request.form['task_subject']
+
+    if task_name and task_priority and task_deadline and task_subject:
+        task_manager.add_task(task_name, task_deadline, task_priority, task_subject)
         flash('Task added successfully!')
     else:
         flash('All fields are required!')
@@ -69,26 +97,20 @@ def add_task():
 @app.route('/delete-selected', methods=['POST'])
 def delete_selected_tasks():
     task_ids = request.form.getlist('task_ids')
+    task_manager = TaskManager()
+    
     if task_ids:
-        db = get_db_connection()
-        cursor = db.cursor()
-        cursor.execute("DELETE FROM tasks WHERE id IN (%s)" % ','.join(task_ids))
-        db.commit()
-        cursor.close()
-        db.close()
+        task_manager.delete_tasks(task_ids)
         flash('Selected tasks deleted successfully!')
     else:
         flash('No tasks selected to delete.')
+
     return redirect(url_for('index'))
 
 @app.route('/delete-all', methods=['POST'])
 def delete_all_tasks():
-    db = get_db_connection()
-    cursor = db.cursor()
-    cursor.execute("DELETE FROM tasks")
-    db.commit()
-    cursor.close()
-    db.close()
+    task_manager = TaskManager()
+    task_manager.delete_all_tasks()
     flash('All tasks deleted successfully!')
     return redirect(url_for('index'))
 
